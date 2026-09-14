@@ -1,0 +1,5 @@
+# デッキリストはこのリポジトリに置かない（正本は Project docs 側）
+decks.py
+
+__pycache__/
+*.pyc
