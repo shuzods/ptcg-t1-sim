@@ -15,7 +15,7 @@
 #       無償退避1回とは別枠で併用可。条件6はエネを切って逃げる動き不採用(切ると3枚に届かない)。
 import random, sys
 from collections import Counter
-from sim import BASICS, ENER, ESC, pay_hyper, pick_start, CORE
+from sim import BASICS, ENER, ESC, pay_hyper, pick_start, CORE, dance_ok, do_dance
 
 BASIC_EN = ('GRASS', 'PSY', 'WATER', 'FIGHT', 'LIGHT')   # プリズムはアカマツ対象外
 EX_POKE = ('GARURA', 'FIRO', 'LATIAS', 'MIDORI')          # シアノで持ってこられる範囲(本条件で使う分)
@@ -131,8 +131,9 @@ class Line:
     def setup_midori(self):
         if not self.midori_in_play() and 'MIDORI' in self.hand:
             self.hand.remove('MIDORI'); self.bench.append('MIDORI')
-        if self.midori_in_play() and not self.dance_used and 'GRASS' in self.deck:
-            self.dance_used = True; self.deck.remove('GRASS'); self.grass += 1; self.draw(1)
+        if self.midori_in_play() and not self.dance_used and dance_ok(self.hand):
+            # みどりのまいは手札の基本草エネを消費する(2026-09-15 修正)
+            self.dance_used = True; do_dance(self.hand); self.grass += 1; self.draw(1)
 
     def midori_in_play(self):
         return 'MIDORI' in self.bench or self.active == 'MIDORI'
@@ -155,9 +156,9 @@ class Line:
         # 草(つけかえ用) (hyper, poke)
         grass_src = []
         if self.grass >= 1: grass_src.append((0, 0))
-        elif self.midori_in_play() and 'GRASS' in ds: grass_src.append((0, 0))
-        elif 'MIDORI' in self.hand and 'GRASS' in ds: grass_src.append((0, 1))
-        elif 'MIDORI' in ds and 'GRASS' in ds: grass_src.append((1, 1))
+        elif self.midori_in_play() and 'GRASS' in self.hand: grass_src.append((0, 0))
+        elif 'MIDORI' in self.hand and 'GRASS' in self.hand: grass_src.append((0, 1))
+        elif 'MIDORI' in ds and 'GRASS' in self.hand: grass_src.append((1, 1))
         # 前出し (hyper, poke, 手張りを退避に消費, 草を消費)
         front = []
         if 'IREKAE' in self.hand: front.append((0, 0, False, False))
@@ -192,11 +193,11 @@ class Line:
         if 'TSUKEKAE' not in self.hand: return False, 'MOVE'
         if len({c for c in ds if c in BASIC_EN}) < 2: return False, 'AKAMATSU_TYPES'
         nh = self.hand.count('HYPER')
-        if self.grass >= 1 or (self.midori_in_play() and 'GRASS' in ds):
+        if self.grass >= 1 or (self.midori_in_play() and 'GRASS' in self.hand):
             gc, pg = 0, 0
-        elif 'MIDORI' in self.hand and 'GRASS' in ds:
+        elif 'MIDORI' in self.hand and 'GRASS' in self.hand:
             gc, pg = 0, 1
-        elif nh > 0 and 'MIDORI' in ds and 'GRASS' in ds:
+        elif nh > 0 and 'MIDORI' in ds and 'GRASS' in self.hand:
             gc, pg = 1, 1
         else:
             return False, 'GRASS'

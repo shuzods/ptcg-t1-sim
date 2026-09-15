@@ -2,7 +2,7 @@
 # エネ供給は単線: 手張りT1(ガルーラへ直付け) + 手張りT2 + みどりのまいの草1枚をエネルギーつけかえでガルーラへ
 # エネルギーを切って逃げる動きは不採用(例外: みどりのまい後のオーガポン自身の退避のみ可)
 import random, sys
-from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok
+from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok, dance_ok, do_dance
 
 ANY_EN = ('GRASS','PSY','WATER','FIGHT','LIGHT','PRISM')
 
@@ -19,11 +19,16 @@ def unmet(hand, st, hyper_avail, cyrano):
         if not st['active'] and not ('IREKAE' in hand or lat): m.add('PROMOTE')
         if not any(c in ENER for c in hand): m.add('ATTACH')
         if 'TSUKEKAE' not in hand: m.add('MOVE')
-        if not (st['grass'] >= 1 or (midp and 'GRASS' in st['avail'])): m.add('GRASS')
+        if st['grass'] < 1:
+            # みどりのまいは手札の基本草エネを1枚消費する(2026-09-15 修正)
+            if not midp: m.add('MIDORI_P')
+            if 'GRASS' not in hand: m.add('GRASS')
+            elif sum(1 for c in hand if c in ENER) < 2: m.add('ATTACH')
         if best is None or len(m) < len(best): best = m
     return best
 
-FETCH = {'PROMOTE': ('IREKAE','LATIAS'), 'ATTACH': ANY_EN, 'MOVE': ('TSUKEKAE',), 'GRASS': ('MIDORI',)}
+FETCH = {'PROMOTE': ('IREKAE','LATIAS'), 'ATTACH': ANY_EN, 'MOVE': ('TSUKEKAE',),
+         'GRASS': ('GRASS',), 'MIDORI_P': ('MIDORI',)}
 
 def trial3(tmpl, rnd, stats, deal=None):
     if deal is not None:
@@ -65,7 +70,7 @@ def trial3(tmpl, rnd, stats, deal=None):
             route = None
             if esc == 0: route = 'free'
             elif 'LATIAS' in hand: route = 'latias'
-            elif start == 'MIDORI' and 'GRASS' in avail: route = 'midori_self'
+            elif start == 'MIDORI' and dance_ok(hand): route = 'midori_self'
             elif 'IREKAE' in hand: route = 'irekae'
             elif gsrc != 'hyper' and hyper and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
             if gsrc == 'hand': hand.remove('GARURA')
@@ -86,9 +91,11 @@ def trial3(tmpl, rnd, stats, deal=None):
                     need += 1; lat_counted = True
                 else: ok = False
             elif route == 'midori_self':
-                dance_used = True; draw(1)          # 草を貼って退避コストで捨てる(例外許可)
-                bench.append('MIDORI')
-                need += 1; mid_counted = True
+                if do_dance(hand):                  # 手札の草を貼って退避コストで捨てる(例外許可)
+                    dance_used = True; draw(1)
+                    bench.append('MIDORI')
+                    need += 1; mid_counted = True
+                else: ok = False
             elif route == 'irekae':
                 if 'IREKAE' in hand: hand.remove('IREKAE')
                 else: ok = False
@@ -117,8 +124,8 @@ def trial3(tmpl, rnd, stats, deal=None):
     if not midori_in_play and hyper and 'HYPER' in hand and 'MIDORI' in avail and len(hand) >= 3:
         hand.remove('HYPER'); pay_hyper(hand, CORE); hyper = 0
         bench.append('MIDORI'); midori_in_play = True; mid_by_hyper = True
-    if midori_in_play and not dance_used and 'GRASS' in avail:
-        dance_used = True; grass += 1; draw(1)
+    if midori_in_play and not dance_used and dance_ok(hand):
+        dance_used = True; do_dance(hand); grass += 1; draw(1)
         if not mid_counted:
             need += 1; mid_counted = True
             if mid_by_hyper: nhyp += 1
@@ -168,8 +175,8 @@ def trial3(tmpl, rnd, stats, deal=None):
         if not st['latias'] and 'IREKAE' in hand: hand.remove('IREKAE')
         st['active'] = True
     if st['active']: draw(2)
-    if st['midori'] and 'GRASS' in st['avail']:   # T1でダンス済みでも次の番は再度使える
-        st['grass'] += 1; draw(1)
+    if st['midori'] and dance_ok(hand):   # T1でダンス済みでも次の番は再度使える
+        do_dance(hand); st['grass'] += 1; draw(1)
     st['avail'] = set(deck)
     hyper_t2 = 1 if 'HYPER' in hand else 0
 
@@ -190,7 +197,7 @@ def trial3(tmpl, rnd, stats, deal=None):
         st2 = dict(st)
         st2['need'] = st['need'] + hc[1]; st2['nhyp'] = st['nhyp'] + hc[0]
         if 'PROMOTE' not in u: st2['active'] = True
-        if 'GRASS' not in u: st2['grass'] = max(st2['grass'], 1)
+        if 'GRASS' not in u and 'MIDORI_P' not in u: st2['grass'] = max(st2['grass'], 1)
         req = set(u)
         # 草が無い状態ではリーリエ前につけかえを使えない(草が出てから移動するため)
         if 'GRASS' in u and 'MOVE' not in u: req.add('MOVE')

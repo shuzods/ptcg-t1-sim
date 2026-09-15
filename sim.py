@@ -70,6 +70,25 @@ DISCARD_ORDER = JUNK + ['PRISM','GRASS','TSUKEKAE','LILLIE','AKAMATSU','CYRANO',
 
 register_cards(_CARDS)
 
+
+def dance_ok(hand, keep_attach=True):
+    """みどりのまいを撃てるか。**手札に基本草エネルギーが必要**(2026-09-15 修正)。
+    keep_attach=True のときは、その番の手張り用にエネを1枚残せる場合のみ撃つ(固定戦略・保守側)。"""
+    if 'GRASS' not in hand:
+        return False
+    if not keep_attach:
+        return True
+    return sum(1 for c in hand if c in ENER) >= 2
+
+
+def do_dance(hand):
+    """みどりのまい実行: 手札から基本草エネを1枚消費し、オーガポン自身につける。
+    草が無ければ何もせず False(ハイパーのトラッシュで落ちた稀ケース)。"""
+    if 'GRASS' not in hand:
+        return False
+    hand.remove('GRASS')
+    return True
+
 def pay_hyper(hand, protect=()):
     """discard 2 cards for hyper ball (junk first, protecting route-critical cards)."""
     if len(hand) < 2: return False
@@ -176,9 +195,9 @@ def trial(deck_template, rnd, deal=None):
             route = None
             if esc == 0: route = 'free'
             elif 'LATIAS' in hand: route = 'latias_hand'
-            elif start == 'MIDORI' and 'GRASS' in avail: route = 'midori_self'
+            elif start == 'MIDORI' and dance_ok(hand, keep_attach=False): route = 'midori_self'
             elif gsrc != 'hyper' and hyper_t1 and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
-            elif 'MIDORI' in hand and 'TSUKEKAE' in hand and 'GRASS' in avail and esc == 1: route = 'midori_tsuke'
+            elif 'MIDORI' in hand and 'TSUKEKAE' in hand and dance_ok(hand, keep_attach=False) and esc == 1: route = 'midori_tsuke'
             elif 'IREKAE' in hand: route = 'irekae'
             elif esc == 1 and any(c in ENER for c in hand): route = 'paid'
             if True:
@@ -186,7 +205,7 @@ def trial(deck_template, rnd, deal=None):
                 if gsrc == 'hand': hand.remove('GARURA')
                 elif gsrc == 'mega': hand.remove('MEGASIG')
                 elif gsrc == 'hyper':
-                    prot = {'latias_hand':{'LATIAS'}, 'midori_tsuke':{'MIDORI','TSUKEKAE'},
+                    prot = {'latias_hand':{'LATIAS'}, 'midori_tsuke':{'MIDORI','TSUKEKAE','GRASS'}, 'midori_self':{'GRASS'},
                             'irekae':{'IREKAE'}, 'paid':{'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}}.get(route, set())
                     hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper_t1 = 0
                 if gsrc:
@@ -206,7 +225,9 @@ def trial(deck_template, rnd, deal=None):
                         need += 1; lat_counted = True
                     else: oknow = False
                 elif route == 'midori_self':
-                    midori_used = True; draw(1)   # みどりのまい(草を貼って逃げコストに捨てる)
+                    if 'GRASS' in hand:
+                        midori_used = True; do_dance(hand); draw(1)   # みどりのまい(手札の草を貼って逃げコストに捨てる)
+                    else: oknow = False
                     need += 1; mid_counted = True
                 elif route == 'hyper_latias':
                     if 'HYPER' in hand and len(hand) >= 3:
@@ -215,8 +236,8 @@ def trial(deck_template, rnd, deal=None):
                         need += 1; nhyp += 1; lat_counted = True
                     else: oknow = False
                 elif route == 'midori_tsuke':
-                    if 'MIDORI' in hand and 'TSUKEKAE' in hand:
-                        hand.remove('MIDORI'); bench.append('MIDORI'); midori_used = True; draw(1)
+                    if 'MIDORI' in hand and 'TSUKEKAE' in hand and 'GRASS' in hand:
+                        hand.remove('MIDORI'); bench.append('MIDORI'); midori_used = True; do_dance(hand); draw(1)
                         need += 1; mid_counted = True
                         if 'TSUKEKAE' in hand: hand.remove('TSUKEKAE')
                     else: oknow = False
@@ -244,8 +265,8 @@ def trial(deck_template, rnd, deal=None):
     if active == 'GARURA': draw(2)   # おつかいダッシュ(バトル場のときのみ)
     if 'MIDORI' not in bench and 'MIDORI' in hand:
         hand.remove('MIDORI'); bench.append('MIDORI')
-    if 'MIDORI' in bench and not midori_used and 'GRASS' in avail:
-        midori_used = True; e_other += 1; draw(1)
+    if 'MIDORI' in bench and not midori_used and dance_ok(hand):
+        midori_used = True; do_dance(hand); e_other += 1; draw(1)
         if not mid_counted: need += 1; mid_counted = True
     firo_in_play = False
     if 'FIRO' in hand:
@@ -269,8 +290,8 @@ def trial(deck_template, rnd, deal=None):
     if active == 'GARURA': draw(2)   # おつかいダッシュ
     if 'MIDORI' not in bench and 'MIDORI' in hand:
         hand.remove('MIDORI'); bench.append('MIDORI')
-    if 'MIDORI' in bench and 'GRASS' in avail:
-        e_other += 1; draw(1)
+    if 'MIDORI' in bench and dance_ok(hand):
+        do_dance(hand); e_other += 1; draw(1)
         if not mid_counted: need += 1; mid_counted = True
     latias_in_play = 'LATIAS' in bench
     esc_active = 3 if active == 'GARURA' else ({'LATIAS':0,'KAPU':0}.get(active, 1))

@@ -4,7 +4,7 @@
 # アカマツを撃つ番は他サポート併用不可(リーリエ等のフォールバックなし)
 import random, sys
 from collections import Counter
-from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok
+from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok, dance_ok, do_dance
 
 BASIC_EN = ('GRASS', 'PSY', 'WATER', 'FIGHT', 'LIGHT')   # プリズムはアカマツ対象外
 
@@ -46,7 +46,7 @@ def trial4(tmpl, rnd, stats, deal=None):
             route = None
             if esc == 0: route = 'free'
             elif 'LATIAS' in hand: route = 'latias'
-            elif start == 'MIDORI' and 'GRASS' in avail: route = 'midori_self'
+            elif start == 'MIDORI' and dance_ok(hand): route = 'midori_self'
             elif 'IREKAE' in hand: route = 'irekae'
             elif gsrc != 'hyper' and hyper and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
             if gsrc == 'hand': hand.remove('GARURA')
@@ -67,8 +67,10 @@ def trial4(tmpl, rnd, stats, deal=None):
                     need += 1; lat_counted = True
                 else: ok = False
             elif route == 'midori_self':
-                dance_used = True; draw(1); bench.append('MIDORI')
-                need += 1                       # オーガポン自身の草退避に寄与
+                if do_dance(hand):
+                    dance_used = True; draw(1); bench.append('MIDORI')
+                    need += 1                   # オーガポン自身の草退避に寄与
+                else: ok = False
             elif route == 'irekae':
                 if 'IREKAE' in hand: hand.remove('IREKAE')
                 else: ok = False
@@ -91,8 +93,8 @@ def trial4(tmpl, rnd, stats, deal=None):
     if 'MIDORI' not in bench and active != 'MIDORI' and 'MIDORI' in hand:
         hand.remove('MIDORI'); bench.append('MIDORI')
     midori_in_play = ('MIDORI' in bench) or (active == 'MIDORI')
-    if midori_in_play and not dance_used and 'GRASS' in avail:
-        dance_used = True; draw(1)                       # 草は本条件では不要・ドローのみ利用
+    if midori_in_play and not dance_used and dance_ok(hand):
+        dance_used = True; do_dance(hand); draw(1)       # 草は本条件では不要・ドローのみ利用
     if 'LATIAS' in hand:
         hand.remove('LATIAS'); bench.append('LATIAS')
         if not lat_counted: need += 1; lat_counted = True
@@ -125,8 +127,8 @@ def trial4(tmpl, rnd, stats, deal=None):
         if 'LATIAS' not in bench: hand.remove('IREKAE')
         active = 'GARURA'
     if active == 'GARURA': draw(2)
-    if midori_in_play and 'GRASS' in set(deck):
-        draw(1)
+    if midori_in_play and dance_ok(hand, keep_attach=False):   # T2は手張りをアカマツ由来で賄うため草を使い切ってよい
+        do_dance(hand); draw(1)
     avail2 = set(deck)
     hyper_t2 = 1 if ('HYPER' in hand and len(hand) >= 3) else 0
 
