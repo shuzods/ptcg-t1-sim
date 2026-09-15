@@ -15,7 +15,7 @@
 #       無償退避1回とは別枠で併用可。条件6はエネを切って逃げる動き不採用(切ると3枚に届かない)。
 import random, sys
 from collections import Counter
-from sim import BASICS, ENER, pay_hyper, pick_start, CORE
+from sim import BASICS, ENER, ESC, pay_hyper, pick_start, CORE
 
 BASIC_EN = ('GRASS', 'PSY', 'WATER', 'FIGHT', 'LIGHT')   # プリズムはアカマツ対象外
 EX_POKE = ('GARURA', 'FIRO', 'LATIAS', 'MIDORI')          # シアノで持ってこられる範囲(本条件で使う分)
@@ -65,7 +65,7 @@ class Line:
 
     def esc_active(self):
         if 'LATIAS' in self.bench: return 0
-        return {'GARURA': 3, 'LATIAS': 0, 'KAPU': 0}.get(self.active, 1)
+        return ESC.get(self.active, 1)
 
     def gar_in_play(self):
         return self.active == 'GARURA' or 'GARURA' in self.bench

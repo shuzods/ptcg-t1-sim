@@ -10,6 +10,44 @@ OTHER_ORDER = ['PIPPI','PAO','NAGE','KICHI','IDO','NYASU']
 CORE = {'GARURA','FIRO','LATIAS','MIDORI','IREKAE','TSUKEKAE','AKAMATSU','CYRANO','LILLIE',
         'NYASU','MEGASIG','HYPER','GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}
 
+# 逃げコスト表(先攻・後攻で共用。未登録のたねは1として扱う)
+ESC = {'GARURA': 3, 'LATIAS': 0, 'KAPU': 0, 'FIRO': 0}
+
+
+def register_cards(spec):
+    """カード属性をエンジン外(decks.py の CARDS)から取り込む拡張点。
+
+    エンジンを編集せずにカードを追加するための仕組み。spec は
+      {カード名: dict(basic=bool, esc=int, start='last'|'first'|int, junk_after=カード名)}
+    basic      : たねポケモンとして扱う
+    esc        : 逃げコスト(省略時は1)
+    start      : pick_start の優先順位。'last'=最低、'first'=OTHER_ORDER の先頭、int=挿入位置
+    junk_after : ハイパーボールの捨て優先度。指定カードの直後に差し込む(省略時は捨てない札扱い)
+    """
+    for name, a in (spec or {}).items():
+        if a.get('basic'):
+            BASICS.add(name)
+        if 'esc' in a:
+            ESC[name] = a['esc']
+        pos = a.get('start')
+        if pos is not None and name not in OTHER_ORDER:
+            if pos == 'last':
+                OTHER_ORDER.append(name)
+            elif pos == 'first':
+                OTHER_ORDER.insert(0, name)
+            else:
+                OTHER_ORDER.insert(int(pos), name)
+        after = a.get('junk_after')
+        if after is not None and name not in JUNK:
+            JUNK.insert(JUNK.index(after) + 1, name)
+            DISCARD_ORDER.insert(DISCARD_ORDER.index(after) + 1, name)
+
+
+try:
+    from decks import CARDS as _CARDS
+except Exception:
+    _CARDS = {}
+
 
 def hyper_ok(need, nhyp):
     """共通規約「全員ハイパーNG」の判定(v2・先攻はT1+T2通算)。
@@ -29,6 +67,8 @@ def pick_start(basics):
 
 DISCARD_ORDER = JUNK + ['PRISM','GRASS','TSUKEKAE','LILLIE','AKAMATSU','CYRANO',
                         'MEGASIG','NYASU','IREKAE','MIDORI','LATIAS','FIRO','HYPER','GARURA']
+
+register_cards(_CARDS)
 
 def pay_hyper(hand, protect=()):
     """discard 2 cards for hyper ball (junk first, protecting route-critical cards)."""
@@ -116,7 +156,7 @@ def trial(deck_template, rnd, deal=None):
     hyper_t1 = 1          # 先攻はハイパー1ターン1回まで(判断1)
     paid = False
     midori_used = False
-    esc = {'GARURA':3,'LATIAS':0,'KAPU':0,'FIRO':0}.get(start, 1)
+    esc = ESC.get(start, 1)
 
     # 「必要ポケモン」計上(判断2=案B: プランに寄与したポケモンは現物/スタートも数える)
     need = 0; nhyp = 0
