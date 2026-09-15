@@ -140,19 +140,19 @@ class Line:
 
     # ---------- 判定 ----------
     def final5(self, akamatsu):
-        """ファイアローが無色2でバトル場に立てるか
+        """ファイアローが無色2でバトル場に立てるか。(可否, 未達理由) を返す
         各選択肢は (ハイパー使用数, ポケモン必要数, ...) を持ち、
         「必要ポケモン全員がハイパー」になる組み合わせは規約により除外する"""
         ds = self.dset()
         n_en = sum(1 for c in self.hand if c in ENER)
         tsuke = self.hand.count('TSUKEKAE')
         nh = self.hand.count('HYPER')
-        if akamatsu and len({c for c in ds if c in BASIC_EN}) < 2: return False
+        if akamatsu and len({c for c in ds if c in BASIC_EN}) < 2: return False, 'AKAMATSU_TYPES'
         # 本体 (hyper, poke)
         firo = []
         if 'FIRO' in self.hand: firo.append((0, 1))
         if 'FIRO' in ds: firo.append((1, 1))
-        if not firo: return False
+        if not firo: return False, 'NO_FIRO'
         # 草(つけかえ用) (hyper, poke)
         grass_src = []
         if self.grass >= 1: grass_src.append((0, 0))
@@ -168,8 +168,11 @@ class Line:
             front.append((0, 0, True, False))
         if not self.retreat_used and self.active == 'MIDORI' and self.grass >= 1:
             front.append((0, 0, False, True))
-        if not front: return False
+        if not front: return False, 'PROMOTE'
         hand_en = n_en + (1 if akamatsu else 0)
+        passed_hyper = False   # ハイパー制約を通った組み合わせが1つでもあったか(診断用)
+        rule_blocked = False   # 「全員ハイパーNG」規約で落ちた組み合わせがあったか
+        hand_short = False     # 手札枚数不足で落ちた組み合わせがあったか
         for hf, pf in firo:
             for hr, pr, paid, gcut in front:
                 for hg, pg in (grass_src or [(0, 0)]):
@@ -177,15 +180,21 @@ class Line:
                     hgg = hg if use_grass else 0
                     pgg = pg if use_grass else 0
                     uh = hf + hr + hgg
-                    if uh > nh or len(self.hand) < 2 * uh + 1: continue
+                    if uh > nh or len(self.hand) < 2 * uh + 1:
+                        hand_short = True; continue
                     tot_h = self.hyper_poke + uh
                     tot_p = self.need_poke + pf + pr + pgg
-                    if blocked(tot_p, tot_h): continue          # 全員ハイパーNG
+                    if blocked(tot_p, tot_h):
+                        rule_blocked = True; continue          # 全員ハイパーNG
+                    passed_hyper = True
                     e = 1 if akamatsu else 0
                     if not paid and hand_en >= 1: e += 1
                     if use_grass and tsuke >= 1: e += 1
-                    if e >= 2: return True
-        return False
+                    if e >= 2: return True, None
+        if passed_hyper: return False, 'ENERGY'
+        if rule_blocked: return False, 'HYPER_RULE'
+        if hand_short: return False, 'HAND_SIZE'
+        return False, 'ENERGY'
 
     def final6(self):
         """ガルーラが無色3(アカマツ+手張り+草つけかえ)でバトル場に立てるか"""
@@ -217,12 +226,12 @@ class Line:
 ANGO_ORDER = ('FIRO', 'TSUKEKAE', 'IREKAE', 'MIDORI', 'GRASS')
 
 def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
-    """1本のプレイ線を実行して (ok5, ok6, 条件6の未達理由) を返す"""
+    """1本のプレイ線を実行して (ok5, ok6, 条件6の未達理由, 条件5の未達理由) を返す"""
     L = Line(hand0, deck0, start, rnd)
 
     # --- シアノ: 必要なポケモンexを最大3枚まとめて確保(最初に撃つ) ---
     if plan == 'CYRANO':
-        if not L.play_supporter('CYRANO'): return False, False, None
+        if not L.play_supporter('CYRANO'): return False, False, None, 'SUPPORTER'
         picks = []
         if not L.gar_in_play() and 'GARURA' not in L.hand: picks.append('GARURA')
         if 'FIRO' not in L.hand: picks.append('FIRO')
@@ -233,7 +242,7 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
     # --- リーリエの決心: 無償の展開を先に済ませてから撃つ ---
     if plan == 'LILLIE':
         L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae); L.dash(); L.setup_midori()
-        if not L.play_supporter('LILLIE'): return False, False, None
+        if not L.play_supporter('LILLIE'): return False, False, None, 'SUPPORTER'
         L.deck.extend(L.hand); L.hand.clear(); rnd.shuffle(L.deck); L.draw(8)
 
     # --- 暗号マニアの解読: ドロー前に不足パーツを山上に積む ---
@@ -241,8 +250,8 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
         L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae)
         draws = (2 if (L.active == 'GARURA' and not L.dash_used) else 0) \
                 + (1 if (L.midori_in_play() or 'MIDORI' in L.hand) and not L.dance_used else 0)
-        if draws < 1: return False, False, None
-        if not L.play_supporter('ANGO'): return False, False, None
+        if draws < 1: return False, False, None, 'SUPPORTER'
+        if not L.play_supporter('ANGO'): return False, False, None, 'SUPPORTER'
         need = []
         if 'FIRO' not in L.hand: need.append('FIRO')
         if 'TSUKEKAE' not in L.hand: need.append('TSUKEKAE')
@@ -260,17 +269,17 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
     L.bench_latias()
     L.setup_midori()
     if not L.gar_in_play():
-        return False, False, 'NO_GARURA'
+        return False, False, 'NO_GARURA', 'NO_GARURA'
 
     ok6 = False; why = None
     if plan == 'AKAMATSU':
         got = L.play_supporter('AKAMATSU')
-        ok5 = L.final5(akamatsu=got)
+        ok5, why5 = L.final5(akamatsu=got)
         if got: ok6, why = L.final6()
         else: why = 'AKAMATSU'
     else:
-        ok5 = L.final5(akamatsu=False)
-    return ok5, ok6, why
+        ok5, why5 = L.final5(akamatsu=False)
+    return ok5, ok6, why, why5
 
 PLANS = (None, 'AKAMATSU', 'CYRANO', 'ANGO', 'LILLIE')
 
@@ -287,17 +296,24 @@ def trial_back(tmpl, rnd, stats, deal=None):
     hand.remove(start)
     if deck: hand.append(deck.pop(0))          # ターン頭ドロー
 
-    ok5 = ok6 = False; whys = []
+    ok5 = ok6 = False; whys = []; whys5 = []
     for plan in PLANS:
         for ui in (False, True):
-            a, b, why = run_line(hand, deck, start, plan, ui, rnd, stats)
+            a, b, why, why5 = run_line(hand, deck, start, plan, ui, rnd, stats)
             ok5 = ok5 or a; ok6 = ok6 or b
             if why: whys.append(why)
+            if why5: whys5.append(why5)
             if ok5 and ok6: break
         if ok5 and ok6: break
     if not ok6 and whys:
         for w in ('NO_GARURA', 'MOVE', 'GRASS', 'AKAMATSU', 'PROMOTE', 'HYPER_CONFLICT', 'AKAMATSU_TYPES'):
             if w in whys: stats['c6_' + w] += 1; break
+    if not ok5 and whys5:
+        for w in ('NO_GARURA', 'NO_FIRO', 'PROMOTE', 'ENERGY', 'HYPER_RULE', 'HAND_SIZE', 'AKAMATSU_TYPES', 'SUPPORTER'):
+            if w in whys5: stats['c5_' + w] += 1; break
+        # 優先順位に関係ない延べ計上(上限値の診断用)
+        for w in ('HYPER_RULE', 'HAND_SIZE'):
+            if w in whys5: stats['c5_any_' + w] += 1
     return ok5, ok6
 
 def run_back(counts, trials, seed=9001):

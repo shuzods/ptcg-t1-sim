@@ -148,7 +148,7 @@ def feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
                 return True
     return False
 
-def trial(deck_template, rnd, deal=None):
+def trial(deck_template, rnd, deal=None, stats=None):
     if deal is not None:
         d = list(deal)
     else:
@@ -255,6 +255,13 @@ def trial(deck_template, rnd, deal=None):
                     active = 'GARURA'
 
     cond1 = (active == 'GARURA') and not paid
+    if stats is not None:
+        # 条件1の内訳(診断用。判定そのものには影響しない)
+        if start == 'GARURA':            stats['c1_ガルーラスタート'] += 1
+        elif cond1:                      stats['c1_達成_無償退避'] += 1
+        elif not garura_in_play:         stats['c1_未達_ガルーラを確保できない'] += 1
+        elif paid:                       stats['c1_未達_手張りを退避に使うしかない'] += 1
+        else:                            stats['c1_未達_逃がせない'] += 1
     zaijou = garura_in_play          # ガルーラが場にいる(バトル場でもベンチでも)
     if not zaijou:
         return cond1, False, None
