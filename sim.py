@@ -148,7 +148,7 @@ def feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
                 return True
     return False
 
-def trial(deck_template, rnd, deal=None, stats=None):
+def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
     if deal is not None:
         d = list(deal)
     else:
@@ -185,6 +185,7 @@ def trial(deck_template, rnd, deal=None, stats=None):
 
     # ---------- T1: ガルーラを場に出す(できればバトル場へ) ----------
     garura_in_play = (active == 'GARURA')
+    used_paid = False
     if active != 'GARURA':
         gsrc = None
         if 'GARURA' in hand: gsrc = 'hand'
@@ -199,7 +200,8 @@ def trial(deck_template, rnd, deal=None, stats=None):
             elif gsrc != 'hyper' and hyper_t1 and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
             elif 'MIDORI' in hand and 'TSUKEKAE' in hand and dance_ok(hand, keep_attach=False) and esc == 1: route = 'midori_tsuke'
             elif 'IREKAE' in hand: route = 'irekae'
-            elif esc == 1 and any(c in ENER for c in hand): route = 'paid'
+            elif esc == 1 and any(c in ENER for c in hand) and not no_paid: route = 'paid'
+            used_paid = (route == 'paid')
             if True:
                 # ガルーラ確保(先に手札から抜く)
                 if gsrc == 'hand': hand.remove('GARURA')
@@ -264,7 +266,7 @@ def trial(deck_template, rnd, deal=None, stats=None):
         else:                            stats['c1_未達_逃がせない'] += 1
     zaijou = garura_in_play          # ガルーラが場にいる(バトル場でもベンチでも)
     if not zaijou:
-        return cond1, False, None
+        return cond1, False, None, used_paid, d
     if active != 'GARURA' and 'GARURA' not in bench:
         bench.append('GARURA')
 
@@ -333,7 +335,26 @@ def trial(deck_template, rnd, deal=None, stats=None):
             hl2 = (1 if 'HYPER' in hand else 0) if (hyper_left - hc) > 0 else 0
             ok = feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
                       hl2, None, esc_active, need=need + pk, nhyp=nhyp + hc)
-    return cond1, True, ok
+    return cond1, True, ok, used_paid, d
+
+
+def trial(deck_template, rnd, deal=None, stats=None):
+    """条件1・条件2の判定。
+
+    2026-09-16 追加: 先1に「エネを切って逃げる」しか退避手段が無い場合、モデルは既定でエネを払って
+    ガルーラを前に出す(=その番の手張りなし)。条件2については、ガルーラを前に出さず手張りを
+    ファイアローexに回すルートも評価し、どちらかで成立すれば達成とする。
+    条件1はこの分岐の影響を受けない(どちらのルートでも条件1は未達)。
+    別ルートの評価は配りから決まる専用の乱数を使い、呼び出し元の rnd を消費しない。
+    """
+    c1, z, ok, used_paid, d = _trial(deck_template, rnd, deal, stats)
+    if used_paid and not ok:
+        alt_rnd = random.Random(','.join(d))
+        _, z2, ok2, _, _ = _trial(deck_template, alt_rnd, d, None, no_paid=True)
+        if z2 and ok2:
+            z, ok = True, True
+            if stats is not None: stats['c2_救済_手張りをファイアローに温存'] += 1
+    return c1, z, ok
 
 def run(counts, trials, seed):
     tmpl = []

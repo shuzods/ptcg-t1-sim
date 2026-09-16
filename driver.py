@@ -72,6 +72,7 @@ if __name__ == '__main__':
         ('TSUKEKAE=0', variant(CUR, TSUKEKAE=0), ('c3',)),
         ('MIDORI=0', variant(CUR, MIDORI=0), ('c3',)),
         ('AKAMATSU=0', variant(CUR, AKAMATSU=0), ('c4',)),
+        ('GRASS=0', variant(CUR, GRASS=0), ('c3',)),
         ('エネ全0', variant(CUR, GRASS=0, PSY=0, WATER=0, FIGHT=0, LIGHT=0, PRISM=0), ('c2','c3','c4')),
     ]
     for nm, cfg, keys in tests:
