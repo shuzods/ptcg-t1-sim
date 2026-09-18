@@ -20,10 +20,20 @@ from sim import BASICS, ENER, ESC, pay_hyper, pick_start, CORE, dance_ok, do_dan
 BASIC_EN = ('GRASS', 'PSY', 'WATER', 'FIGHT', 'LIGHT')   # プリズムはアカマツ対象外
 EX_POKE = ('GARURA', 'FIRO', 'LATIAS', 'MIDORI')          # シアノで持ってこられる範囲(本条件で使う分)
 
+# リーリエの前にベンチへ出さないカード(2026-09-18 ユーザー指定)
+SPARE_NO_BENCH = ('PAO', 'GACHI', 'NYASU', 'FIRO')
+
 # 「全員ハイパーNG」の解釈。先攻v2(2026-09-12)では共通規約の文言「複数の異なるポケモンを
 # 同時に揃える条件では」に従い、必要ポケモンが1体だけの局面には制約を適用しない。
 # 後攻v1/v2 は1体の局面にも適用する保守的な実装だったため、フラグで切替可能にした。
 SINGLE_POKE_HYPER_OK = True
+
+# 診断用トグル(既定 True。寄与の分離を測るときだけ False にする)
+AKAMATSU_GRASS = True                # アカマツの手札分を基本草にしてみどりのまいへ回す線
+HYPER_LATIAS_BEFORE_LILLIE = False   # リーリエの前にハイパーでラティアスexを確保する線
+                                     # 2026-09-18: 実装したが平均では -0.9pt のため既定 False。
+                                     # リーリエ前にハイパーを消費すると、引いた8枚に
+                                     # いれかえ/ラティアスexがあってもハイパーが残らない。
 
 def blocked(tot_p, tot_h):
     """True なら「全員ハイパー」に該当し、その組み合わせは不可"""
@@ -140,6 +150,21 @@ class Line:
         if self.active == 'GARURA' and not self.dash_used:
             self.dash_used = True; self.draw(2)
 
+    def bench_spares(self):
+        """リーリエの決心の前に、手札の不要なポケモンをベンチに出す(2026-09-18 追加)。
+
+        リーリエは手札を山に戻すため、先にベンチに出しておけば盤面が残り、山に戻る枚数も減る。
+        除外(2026-09-18 ユーザー指定):
+          パオジアン / ガチグマ(初動に関与しない)
+          ニャースex(リーリエのサーチに使うため手札に残す)
+          ファイアローex(条件の必須ピースなので手札に残す)
+          既に盤面にいる種類の2体目以降(**草ポンは例外**=2体目も出す)
+        ゼロの大空洞でベンチ枠は8体。モデルはベンチ上限を元々無考慮なので枠の判定はしない。"""
+        for c in list(self.hand):
+            if c not in BASICS or c in SPARE_NO_BENCH: continue
+            if c != 'MIDORI' and (c == self.active or c in self.bench): continue
+            self.hand.remove(c); self.bench.append(c)
+
     def setup_midori(self):
         if not self.midori_in_play() and 'MIDORI' in self.hand:
             self.hand.remove('MIDORI'); self.bench.append('MIDORI')
@@ -165,12 +190,17 @@ class Line:
         if 'FIRO' in self.hand: firo.append((0, 1))
         if 'FIRO' in ds: firo.append((1, 1))
         if not firo: return False, 'NO_FIRO'
-        # 草(つけかえ用) (hyper, poke)
+        # 草(つけかえ用) (hyper, poke, アカマツの手札分を草に回すか)
         grass_src = []
-        if self.grass >= 1: grass_src.append((0, 0))
-        elif self.midori_in_play() and 'GRASS' in self.hand: grass_src.append((0, 0))
-        elif 'MIDORI' in self.hand and 'GRASS' in self.hand: grass_src.append((0, 1))
-        elif 'MIDORI' in ds and 'GRASS' in self.hand: grass_src.append((1, 1))
+        if self.grass >= 1: grass_src.append((0, 0, False))
+        elif self.midori_in_play() and 'GRASS' in self.hand: grass_src.append((0, 0, False))
+        elif 'MIDORI' in self.hand and 'GRASS' in self.hand: grass_src.append((0, 1, False))
+        elif 'MIDORI' in ds and 'GRASS' in self.hand: grass_src.append((1, 1, False))
+        # アカマツで手札に加える1枚を基本草にしてみどりのまいへ回す(2026-09-18 追加・ユーザー例9)
+        # この1枚は手張りに使えなくなるため、下のループで手張り分から差し引いて両方を試す。
+        if AKAMATSU_GRASS and akamatsu and not self.dance_used and self.grass == 0 and 'GRASS' in ds:
+            if self.midori_in_play(): grass_src.append((0, 0, True))
+            elif 'MIDORI' in self.hand: grass_src.append((0, 1, True))
         # 前出し (hyper, poke, 手張りを退避に消費, 草を消費)
         front = []
         if 'IREKAE' in self.hand: front.append((0, 0, False, False))
@@ -181,19 +211,27 @@ class Line:
         if not self.retreat_used and self.active == 'MIDORI' and self.grass >= 1:
             front.append((0, 0, False, True))
         if not front: return False, 'PROMOTE'
-        hand_en = n_en + (1 if akamatsu else 0)
+        # 「草(つけかえ)を使わない」選択肢も必ず候補に含める(2026-09-18 修正)。
+        # 旧実装は use_grass を bool(grass_src) から導出していたため、草の供給源が
+        # 1つ見つかると「草を使わずアカマツの1枚を手張りに回す」線が消えていた。
+        grass_opts = [(hg, pg, fa, True) for hg, pg, fa in grass_src] + [(0, 0, False, False)]
         passed_hyper = False   # ハイパー制約を通った組み合わせが1つでもあったか(診断用)
         rule_blocked = False   # 「全員ハイパーNG」規約で落ちた組み合わせがあったか
         hand_short = False     # 手札枚数不足で落ちた組み合わせがあったか
+        hyper_short = False    # ハイパーボールの枚数不足で落ちた組み合わせがあったか(2026-09-18 分離)
         for hf, pf in firo:
             for hr, pr, paid, gcut in front:
-                for hg, pg in (grass_src or [(0, 0)]):
-                    use_grass = bool(grass_src) and not gcut
+                for hg, pg, from_aka, use in grass_opts:
+                    use_grass = use and not gcut
                     hgg = hg if use_grass else 0
                     pgg = pg if use_grass else 0
+                    # アカマツの1枚を草に回した場合、その番の手張りには使えない
+                    hand_en = n_en + (1 if (akamatsu and not (use_grass and from_aka)) else 0)
                     uh = hf + hr + hgg
-                    if uh > nh or len(self.hand) < 2 * uh + 1:
-                        hand_short = True; continue
+                    if uh > nh:
+                        hyper_short = True; continue      # ハイパーボールの枚数が足りない
+                    if len(self.hand) < 2 * uh + 1:
+                        hand_short = True; continue       # トラッシュ2枚を払うと手札が足りない
                     tot_h = self.hyper_poke + uh
                     tot_p = self.need_poke + pf + pr + pgg
                     if blocked(tot_p, tot_h):
@@ -206,6 +244,7 @@ class Line:
         if passed_hyper: return False, 'ENERGY'
         if rule_blocked: return False, 'HYPER_RULE'
         if hand_short: return False, 'HAND_SIZE'
+        if hyper_short: return False, 'HYPER_COUNT'
         return False, 'ENERGY'
 
     def final6(self):
@@ -220,6 +259,11 @@ class Line:
             gc, pg = 0, 1
         elif nh > 0 and 'MIDORI' in ds and 'GRASS' in self.hand:
             gc, pg = 1, 1
+        # アカマツの1枚を草にしてみどりのまいへ回し、手張りは手札のエネで賄う(2026-09-18 追加)
+        elif AKAMATSU_GRASS and 'GRASS' in ds and any(c in ENER for c in self.hand) and self.midori_in_play():
+            gc, pg = 0, 0
+        elif AKAMATSU_GRASS and 'GRASS' in ds and any(c in ENER for c in self.hand) and 'MIDORI' in self.hand:
+            gc, pg = 0, 1
         else:
             return False, 'GRASS'
         if self.active == 'GARURA': pc, pp = 0, 0
@@ -251,11 +295,25 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
         if not L.midori_in_play() and 'MIDORI' not in L.hand: picks.append('MIDORI')
         for c in picks[:3]: L.take(c)
 
-    # --- リーリエの決心: 無償の展開を先に済ませてから撃つ ---
+    # --- リーリエの決心(2026-09-18 手順を修正) ---
+    # 旧実装は dash() を撃ってからリーリエを使っており、ダッシュで引いた2枚まで山に戻していた。
+    # 実戦の手順は「ガルーラ確保・前出し → 不要ポケモンをベンチへ → リーリエ → ダッシュ →
+    # 草ポン展開+みどりのまい」で、リーリエの8枚にダッシュの2枚が上乗せされる(計10枚)。
     if plan == 'LILLIE':
-        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae); L.dash(); L.setup_midori()
+        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae)
+        L.bench_spares()                                   # 山に戻さないよう先にベンチへ
+        # F: 前出し手段がまったく無ければ、ハイパーでラティアスexを確保してからリーリエ
+        #    (2026-09-18 追加。ユーザー提示の例5の線)
+        if (HYPER_LATIAS_BEFORE_LILLIE
+                and 'LATIAS' not in L.bench and L.active != 'LATIAS' and 'IREKAE' not in L.hand
+                and 'HYPER' in L.hand and 'LATIAS' in L.deck and len(L.hand) >= 3):
+            if L.use_hyper('LATIAS') and 'LATIAS' in L.hand:
+                L.hand.remove('LATIAS'); L.bench.append('LATIAS')
+                L.need_poke += 1; L.hyper_poke += 1
         if not L.play_supporter('LILLIE'): return False, False, None, 'SUPPORTER'
         L.deck.extend(L.hand); L.hand.clear(); rnd.shuffle(L.deck); L.draw(8)
+        L.dash()                                           # リーリエの後に引く
+        L.setup_midori()
 
     # --- 暗号マニアの解読: ドロー前に不足パーツを山上に積む ---
     if plan == 'ANGO':
@@ -318,10 +376,10 @@ def trial_back(tmpl, rnd, stats, deal=None):
         for w in ('NO_GARURA', 'MOVE', 'GRASS', 'AKAMATSU', 'PROMOTE', 'HYPER_CONFLICT', 'AKAMATSU_TYPES'):
             if w in whys: stats['c6_' + w] += 1; break
     if not ok5 and whys5:
-        for w in ('NO_GARURA', 'NO_FIRO', 'PROMOTE', 'ENERGY', 'HYPER_RULE', 'HAND_SIZE', 'AKAMATSU_TYPES', 'SUPPORTER'):
+        for w in ('NO_GARURA', 'NO_FIRO', 'PROMOTE', 'ENERGY', 'HYPER_RULE', 'HYPER_COUNT', 'HAND_SIZE', 'AKAMATSU_TYPES', 'SUPPORTER'):
             if w in whys5: stats['c5_' + w] += 1; break
         # 優先順位に関係ない延べ計上(上限値の診断用)
-        for w in ('HYPER_RULE', 'HAND_SIZE'):
+        for w in ('HYPER_RULE', 'HAND_SIZE', 'HYPER_COUNT'):
             if w in whys5: stats['c5_any_' + w] += 1
     return ok5, ok6
 
