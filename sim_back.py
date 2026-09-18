@@ -63,6 +63,18 @@ class Line:
         if card in self.deck: self.deck.remove(card); self.hand.append(card); return True
         return False
 
+    def stack_top(self, cards):
+        """山札から選んだカードを山上に置く(暗号マニアの解読)。
+        手札には入らないため、引くには以後のドロー(ダッシュ/みどりのまい)が必要。
+        2026-09-18 修正: 従来は take() で手札に直接加えており、ドローを消費せず
+        その後のダッシュ2ドローも別途フルに走っていた(二重取り)。"""
+        picked = []
+        for c in cards:
+            if c in self.deck:
+                self.deck.remove(c); picked.append(c)
+        self.deck[:0] = picked
+        return len(picked)
+
     def esc_active(self):
         if 'LATIAS' in self.bench: return 0
         return ESC.get(self.active, 1)
@@ -248,9 +260,6 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
     # --- 暗号マニアの解読: ドロー前に不足パーツを山上に積む ---
     if plan == 'ANGO':
         L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae)
-        draws = (2 if (L.active == 'GARURA' and not L.dash_used) else 0) \
-                + (1 if (L.midori_in_play() or 'MIDORI' in L.hand) and not L.dance_used else 0)
-        if draws < 1: return False, False, None, 'SUPPORTER'
         if not L.play_supporter('ANGO'): return False, False, None, 'SUPPORTER'
         need = []
         if 'FIRO' not in L.hand: need.append('FIRO')
@@ -258,8 +267,8 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
         if 'IREKAE' not in L.hand and 'LATIAS' not in L.bench: need.append('IREKAE')
         if not L.midori_in_play() and 'MIDORI' not in L.hand: need.append('MIDORI')
         if not any(c in ENER for c in L.hand): need.append('GRASS')
-        for c in [x for x in ANGO_ORDER if x in need][:min(2, draws)]:
-            L.take(c)
+        # 山上に2枚まで積むだけ。回収できるかは以後のドロー数に委ねる(ダッシュ温存が前提条件になる)
+        L.stack_top([x for x in ANGO_ORDER if x in need][:2])
 
     # --- 共通の無償展開 ---
     L.get_garura()
