@@ -53,7 +53,7 @@ def trial4(tmpl, rnd, stats, deal=None):
             elif gsrc == 'mega': hand.remove('MEGASIG')
             else:
                 prot = {'latias': {'LATIAS'}, 'irekae': {'IREKAE'}}.get(route, set())
-                hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper = 0
+                hand.remove('HYPER'); pay_hyper(hand, CORE | prot, keep_en=1); hyper = 0
             gar_in_play = True
             need += 1
             if gsrc == 'hyper': nhyp += 1
@@ -76,7 +76,7 @@ def trial4(tmpl, rnd, stats, deal=None):
                 else: ok = False
             elif route == 'hyper_latias':
                 if 'HYPER' in hand and len(hand) >= 3:
-                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}); hyper = 0; bench.append('LATIAS')
+                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}, keep_en=1); hyper = 0; bench.append('LATIAS')
                     need += 1; nhyp += 1; lat_counted = True
                 else: ok = False
             if ok:
@@ -101,10 +101,10 @@ def trial4(tmpl, rnd, stats, deal=None):
     # T1に余ったハイパー: ガルーラがベンチ止まりなら前出し用ラティアス、次にアカマツ用ニャース
     if hyper and 'HYPER' in hand and len(hand) >= 3:
         if active != 'GARURA' and 'LATIAS' not in bench and 'IREKAE' not in hand and 'LATIAS' in avail:
-            hand.remove('HYPER'); pay_hyper(hand, CORE); hyper = 0; bench.append('LATIAS')
+            hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0; bench.append('LATIAS')
             if not lat_counted: need += 1; nhyp += 1; lat_counted = True
         elif 'AKAMATSU' not in hand and 'NYASU' not in hand and 'NYASU' in avail and 'AKAMATSU' in avail:
-            hand.remove('HYPER'); pay_hyper(hand, CORE); hyper = 0
+            hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0
             bench.append('NYASU'); hand.append('AKAMATSU')          # おくのてキャッチで確保(保持)
             need += 1; nhyp += 1; nya_counted = True
     # ニャース現物があり、アカマツが手札に無ければT1に出して確保しておく

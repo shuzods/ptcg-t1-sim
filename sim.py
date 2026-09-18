@@ -89,13 +89,25 @@ def do_dance(hand):
     hand.remove('GRASS')
     return True
 
-def pay_hyper(hand, protect=()):
-    """discard 2 cards for hyper ball (junk first, protecting route-critical cards)."""
+def pay_hyper(hand, protect=(), keep_en=0):
+    """discard 2 cards for hyper ball (junk first, protecting route-critical cards).
+
+    keep_en: その番に手張りが必須の場面で手札に残すエネルギーの枚数(2026-09-18 追加)。
+    DISCARD_ORDER は JUNK(超/水/闘/雷エネを含む)と 'GRASS' をリーリエ・アカマツ等より
+    先に切るため、必須の手張り用エネを失う配りがあった(条件4が先1で脱落する例を実測)。
+    手札のエネが keep_en 枚以下になった時点で、それらを保護対象に加える。"""
     if len(hand) < 2: return False
     for _ in range(2):
+        prot = set(protect)
+        if keep_en:
+            en = [c for c in hand if c in ENER]
+            if len(en) <= keep_en: prot |= set(en)
         tgt = None
         for j in DISCARD_ORDER:
-            if j in hand and j not in protect: tgt = j; break
+            if j in hand and j not in prot: tgt = j; break
+        if tgt is None and keep_en:                 # エネ保護を解いて再探索
+            for j in DISCARD_ORDER:
+                if j in hand and j not in protect: tgt = j; break
         if tgt is None:
             for j in DISCARD_ORDER:
                 if j in hand: tgt = j; break

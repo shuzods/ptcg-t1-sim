@@ -77,7 +77,7 @@ def trial3(tmpl, rnd, stats, deal=None):
             elif gsrc == 'mega': hand.remove('MEGASIG')
             else:
                 prot = {'latias': {'LATIAS'}, 'irekae': {'IREKAE'}}.get(route, set())
-                hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper = 0
+                hand.remove('HYPER'); pay_hyper(hand, CORE | prot, keep_en=1); hyper = 0
             gar_in_play = True
             need += 1; gar_counted = True
             if gsrc == 'hyper': nhyp += 1
@@ -101,7 +101,7 @@ def trial3(tmpl, rnd, stats, deal=None):
                 else: ok = False
             elif route == 'hyper_latias':
                 if 'HYPER' in hand and len(hand) >= 3:
-                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}); hyper = 0; bench.append('LATIAS')
+                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}, keep_en=1); hyper = 0; bench.append('LATIAS')
                     need += 1; nhyp += 1; lat_counted = True
                 else: ok = False
             elif route is None:
@@ -122,7 +122,7 @@ def trial3(tmpl, rnd, stats, deal=None):
     midori_in_play = ('MIDORI' in bench) or (active == 'MIDORI')
     mid_by_hyper = False
     if not midori_in_play and hyper and 'HYPER' in hand and 'MIDORI' in avail and len(hand) >= 3:
-        hand.remove('HYPER'); pay_hyper(hand, CORE); hyper = 0
+        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0
         bench.append('MIDORI'); midori_in_play = True; mid_by_hyper = True
     if midori_in_play and not dance_used and dance_ok(hand):
         dance_used = True; do_dance(hand); grass += 1; draw(1)
@@ -134,7 +134,7 @@ def trial3(tmpl, rnd, stats, deal=None):
         if not lat_counted: need += 1; lat_counted = True
     if hyper and 'HYPER' in hand and 'LATIAS' not in bench and 'IREKAE' not in hand \
        and active != 'GARURA' and 'LATIAS' in avail and len(hand) >= 3:
-        hand.remove('HYPER'); pay_hyper(hand, CORE); hyper = 0; bench.append('LATIAS')
+        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0; bench.append('LATIAS')
         if not lat_counted: need += 1; nhyp += 1; lat_counted = True
     # T1 手張り(ガルーラへ直付け。無ければ達成不能)
     e_gar = 0

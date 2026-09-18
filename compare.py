@@ -3,6 +3,29 @@ import sys, random
 from collections import Counter
 import sim, sim3, sim4, sim_back
 from sim import BASICS
+
+
+def front_pick(view8, c1, c2, c3, c4):
+    """先攻の「いずれか達成(現実的選択)」のプラン選択(2026-09-18 改訂)。
+
+    旧実装は `('FIRO' in view8) or ('CYRANO' in view8)` の1行で、先1の8枚だけを見て
+    条件2かガルーラの線かを決め打ちしていた。しかし条件2・3・4はいずれも
+    「先1にガルーラをバトル場+手張り」から始まるため、多くの配りでは先1の動きが共通で、
+    どの線で殴るかは先2に決められる。30万試行で完全情報上限 67.4% に対し旧実装は 59.8% で、
+    7.6pt を作り過ぎていた(内訳 α3.5 / β4.0。詳細は SENSITIVITY.md)。
+
+    view8 = 初手7枚 + 先1のターン頭ドロー1枚(先1に見えている情報のみ)。
+    c1 は先1にガルーラがバトル場に立ち、かつ手張りを退避に使わずに済んだか
+    (= 先1の動きが両線で共通になり、選択を先2へ持ち越せるか)の判定に使う。
+
+    「8枚にエネが無ければガルーラの線は成立し得ない」という規則も検討したが**不採用**。
+    先1のおつかいダッシュ2ドローは手張りより前に走るため、8枚にエネが無くても
+    ダッシュで引ける。実測で 1.27pt の勝ちを捨てていた(2026-09-18 自己レビューで検出)。"""
+    gar = c3 or c4
+    if c1:
+        return c2 or gar   # 規則1: 先1の動きが共通→選択を先2に持ち越す
+    # 規則2: 先1で不可逆な分岐が強制される→8枚の情報で選ぶ
+    return c2 if (('FIRO' in view8) or ('CYRANO' in view8)) else gar
 from decks import CUR, MID, OLD
 from sim3 import trial3
 from sim4 import trial4
@@ -41,8 +64,7 @@ def run_front(counts, trials, seed=31415):
         c3 = trial3(tmpl, rnd, st, deal=d)
         c4 = trial4(tmpl, rnd, st, deal=d)
         c['c1'] += c1; c['c2'] += c2; c['c3'] += c3; c['c4'] += c4
-        pick2 = ('FIRO' in view8) or ('CYRANO' in view8)   # 先1の8枚で見える情報だけでプラン選択
-        c['front_any'] += (c2 if pick2 else (c3 or c4))
+        c['front_any'] += front_pick(view8, c1, c2, c3, c4)
     return {k: c[k] / trials * 100 for k in ('c1', 'c2', 'c3', 'c4', 'front_any')}
 
 
