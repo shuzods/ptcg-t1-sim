@@ -15,6 +15,7 @@
 #       無償退避1回とは別枠で併用可。条件6はエネを切って逃げる動き不採用(切ると3枚に届かない)。
 import random, sys
 from collections import Counter
+import sim
 from sim import BASICS, ENER, ESC, pay_hyper, pick_start, CORE, dance_ok, do_dance
 
 BASIC_EN = ('GRASS', 'PSY', 'WATER', 'FIGHT', 'LIGHT')   # プリズムはアカマツ対象外
@@ -30,14 +31,20 @@ SINGLE_POKE_HYPER_OK = True
 
 # 診断用トグル(既定 True。寄与の分離を測るときだけ False にする)
 AKAMATSU_GRASS = True                # アカマツの手札分を基本草にしてみどりのまいへ回す線
+CYRANO_SKIP_ACTIVE_LATIAS = True     # 2026-11-22: シアノでラティアスexを選ぶ条件に「バトル場にいない」を追加(不具合修正)。False で旧挙動
+KEEP_RETREAT_FOR_FIRO = True         # 2026-11-22: 条件5で、無償の逃げるをガルーラではなくファイアローの前出しに残す線
+                                     # (ユーザーの手札ダンプ回答・未達3)。False で旧エンジンと完全一致
 HYPER_LATIAS_BEFORE_LILLIE = False   # リーリエの前にハイパーでラティアスexを確保する線
                                      # 2026-09-18: 実装したが平均では -0.9pt のため既定 False。
                                      # リーリエ前にハイパーを消費すると、引いた8枚に
                                      # いれかえ/ラティアスexがあってもハイパーが残らない。
 
 def blocked(tot_p, tot_h):
-    """True なら「全員ハイパー」に該当し、その組み合わせは不可"""
+    """True ならハイパー規約に該当し、その組み合わせは不可。
+    2026-11-22: sim.HYPER_RULE == 'cover2' のとき「ハイパーで補うポケモンは2体まで」(3体以上は不可)。
+    'all_ng' のときは旧規約(必要ポケモンの全員をハイパーで賄うのは不可)。"""
     if tot_p == 0: return False
+    if sim.HYPER_RULE == 'cover2': return tot_h > sim.HYPER_COVER_MAX
     if tot_p == 1 and SINGLE_POKE_HYPER_OK: return False
     return tot_h >= tot_p
 
@@ -134,11 +141,11 @@ class Line:
         if 'LATIAS' in self.hand:
             self.hand.remove('LATIAS'); self.bench.append('LATIAS')
 
-    def promote_garura(self, use_irekae):
-        """ガルーラをバトル場へ(無償のみ)"""
+    def promote_garura(self, use_irekae, allow_retreat=True):
+        """ガルーラをバトル場へ(無償のみ)。allow_retreat=False のときは逃げるを使わず、いれかえだけで前に出す"""
         if self.active == 'GARURA': return True
         if 'GARURA' not in self.bench: return False
-        if self.esc_active() == 0 and not self.retreat_used:
+        if allow_retreat and self.esc_active() == 0 and not self.retreat_used:
             self.bench.remove('GARURA'); self.bench.append(self.active)
             self.active = 'GARURA'; self.retreat_used = True; return True
         if use_irekae and 'IREKAE' in self.hand:
@@ -205,6 +212,9 @@ class Line:
         front = []
         if 'IREKAE' in self.hand: front.append((0, 0, False, False))
         if 'LATIAS' in self.bench and not self.retreat_used: front.append((0, 0, False, False))
+        # 2026-11-22: バトル場のポケモン自身が逃げ0(ラティアスexスタート等)なら無償で逃げられる。
+        # 旧来の線では逃げるを必ずガルーラに使うため表に出なかった漏れ
+        elif self.esc_active() == 0 and not self.retreat_used: front.append((0, 0, False, False))
         if 'LATIAS' in ds and not self.retreat_used: front.append((1, 1, False, False))
         if not self.retreat_used and self.esc_active() == 1 and (n_en >= 1 or akamatsu):
             front.append((0, 0, True, False))
@@ -281,7 +291,7 @@ class Line:
 
 ANGO_ORDER = ('FIRO', 'TSUKEKAE', 'IREKAE', 'MIDORI', 'GRASS')
 
-def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
+def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats, keep_retreat=False):
     """1本のプレイ線を実行して (ok5, ok6, 条件6の未達理由, 条件5の未達理由) を返す"""
     L = Line(hand0, deck0, start, rnd)
 
@@ -291,7 +301,8 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
         picks = []
         if not L.gar_in_play() and 'GARURA' not in L.hand: picks.append('GARURA')
         if 'FIRO' not in L.hand: picks.append('FIRO')
-        if 'IREKAE' not in L.hand and 'LATIAS' not in L.hand and 'LATIAS' not in L.bench: picks.append('LATIAS')
+        if 'IREKAE' not in L.hand and 'LATIAS' not in L.hand and 'LATIAS' not in L.bench \
+                and not (CYRANO_SKIP_ACTIVE_LATIAS and L.active == 'LATIAS'): picks.append('LATIAS')
         if not L.midori_in_play() and 'MIDORI' not in L.hand: picks.append('MIDORI')
         for c in picks[:3]: L.take(c)
 
@@ -300,7 +311,7 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
     # 実戦の手順は「ガルーラ確保・前出し → 不要ポケモンをベンチへ → リーリエ → ダッシュ →
     # 草ポン展開+みどりのまい」で、リーリエの8枚にダッシュの2枚が上乗せされる(計10枚)。
     if plan == 'LILLIE':
-        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae)
+        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae, not keep_retreat)
         L.bench_spares()                                   # 山に戻さないよう先にベンチへ
         # F: 前出し手段がまったく無ければ、ハイパーでラティアスexを確保してからリーリエ
         #    (2026-09-18 追加。ユーザー提示の例5の線)
@@ -317,7 +328,7 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
 
     # --- 暗号マニアの解読: ドロー前に不足パーツを山上に積む ---
     if plan == 'ANGO':
-        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae)
+        L.get_garura(); L.bench_latias(); L.promote_garura(use_irekae, not keep_retreat)
         if not L.play_supporter('ANGO'): return False, False, None, 'SUPPORTER'
         need = []
         if 'FIRO' not in L.hand: need.append('FIRO')
@@ -331,7 +342,7 @@ def run_line(hand0, deck0, start, plan, use_irekae, rnd, stats):
     # --- 共通の無償展開 ---
     L.get_garura()
     L.bench_latias()
-    L.promote_garura(use_irekae)
+    L.promote_garura(use_irekae, not keep_retreat)
     L.dash()
     L.bench_latias()
     L.setup_midori()
@@ -372,6 +383,16 @@ def trial_back(tmpl, rnd, stats, deal=None):
             if why5: whys5.append(why5)
             if ok5 and ok6: break
         if ok5 and ok6: break
+    # 2026-11-22: 条件5で、無償の逃げるをファイアローの前出しのために残す線(ガルーラはベンチのまま、
+    # またはいれかえだけで前に出す)。おつかいダッシュは使えない場合がある。条件6には使わない。
+    # リーリエの線は引き直しのランダム性があり、ORを取ると二重引き直しになるため対象外。
+    if KEEP_RETREAT_FOR_FIRO and not ok5:
+        for plan in PLANS:
+            if plan == 'LILLIE': continue
+            for ui in (False, True):
+                a, _, _, _ = run_line(hand, deck, start, plan, ui, rnd, stats, keep_retreat=True)
+                if a: ok5 = True; break
+            if ok5: break
     if not ok6 and whys:
         for w in ('NO_GARURA', 'MOVE', 'GRASS', 'AKAMATSU', 'PROMOTE', 'HYPER_CONFLICT', 'AKAMATSU_TYPES'):
             if w in whys: stats['c6_' + w] += 1; break

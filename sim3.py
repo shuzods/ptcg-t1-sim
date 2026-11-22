@@ -2,7 +2,8 @@
 # エネ供給は単線: 手張りT1(ガルーラへ直付け) + 手張りT2 + みどりのまいの草1枚をエネルギーつけかえでガルーラへ
 # エネルギーを切って逃げる動きは不採用(例外: みどりのまい後のオーガポン自身の退避のみ可)
 import random, sys
-from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok, dance_ok, do_dance
+import sim as _sim
+from sim import BASICS, ENER, pay_hyper, pick_start, CORE, hyper_ok, dance_ok, do_dance, dig_for_garura
 
 ANY_EN = ('GRASS','PSY','WATER','FIGHT','LIGHT','PRISM')
 
@@ -11,9 +12,12 @@ def unmet(hand, st, hyper_avail, cyrano):
     # ハイパーでポケモンを追加する線は「全員ハイパーNG」通算判定を通ったときのみ
     can_hyper = hyper_avail and hyper_ok(st['need'] + 1, st['nhyp'] + 1)
     targets = [None] + (['LATIAS','MIDORI'] if can_hyper else [])
+    # 2026-11-22: ハイパーが2枚使えるなら、ラティアスexとオーガポンの両方をハイパーで補う線も評価する
+    if hyper_avail >= 2 and len(hand) >= 6 and hyper_ok(st['need'] + 2, st['nhyp'] + 2):
+        targets.append('BOTH')
     for t in targets:
-        lat = st['latias'] or (t == 'LATIAS' and 'LATIAS' in st['avail']) or (cyrano and 'LATIAS' in st['avail'])
-        midp = st['midori'] or ('MIDORI' in hand) or (t == 'MIDORI' and 'MIDORI' in st['avail']) \
+        lat = st['latias'] or (t in ('LATIAS', 'BOTH') and 'LATIAS' in st['avail']) or (cyrano and 'LATIAS' in st['avail'])
+        midp = st['midori'] or ('MIDORI' in hand) or (t in ('MIDORI', 'BOTH') and 'MIDORI' in st['avail']) \
                or (cyrano and 'MIDORI' in st['avail'])
         m = set()
         if not st['active'] and not ('IREKAE' in hand or lat): m.add('PROMOTE')
@@ -30,7 +34,7 @@ def unmet(hand, st, hyper_avail, cyrano):
 FETCH = {'PROMOTE': ('IREKAE','LATIAS'), 'ATTACH': ANY_EN, 'MOVE': ('TSUKEKAE',),
          'GRASS': ('GRASS',), 'MIDORI_P': ('MIDORI',)}
 
-def trial3(tmpl, rnd, stats, deal=None):
+def _trial3(tmpl, rnd, stats, deal=None, t1_cap=None):
     if deal is not None:
         d = list(deal)
     else:
@@ -49,7 +53,7 @@ def trial3(tmpl, rnd, stats, deal=None):
     hand.remove(start)
     draw(1)
     active = start; bench = []
-    hyper = 1
+    hyper = _sim.HYPER_T1_MAX if t1_cap is None else t1_cap
     esc = {'GARURA': 3, 'LATIAS': 0, 'KAPU': 0}.get(start, 1)
     gar_in_play = (active == 'GARURA')
     grass = 0; dance_used = False
@@ -61,23 +65,39 @@ def trial3(tmpl, rnd, stats, deal=None):
         need += 1; gar_counted = True
 
     # ---- T1: ガルーラを場に(できればバトル場へ / 無償退避のみ) ----
+    dug_act = False; dug_nb = 0
     if not gar_in_play:
+        dug_act, dug_nb = dig_for_garura(hand, draw, active, bench, avail, hyper)
+        if dug_nb:
+            dance_used = True
+            grass += dug_nb
         gsrc = None
         if 'GARURA' in hand: gsrc = 'hand'
         elif 'MEGASIG' in hand and 'GARURA' in avail: gsrc = 'mega'
         elif hyper and 'HYPER' in hand and 'GARURA' in avail and len(hand) >= 3: gsrc = 'hyper'
         if gsrc:
-            route = None
-            if esc == 0: route = 'free'
-            elif 'LATIAS' in hand: route = 'latias'
-            elif start == 'MIDORI' and dance_ok(hand): route = 'midori_self'
-            elif 'IREKAE' in hand: route = 'irekae'
-            elif gsrc != 'hyper' and hyper and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
+            def _route():
+                if esc == 0: return 'free'
+                if 'LATIAS' in hand: return 'latias'
+                if start == 'MIDORI' and (dug_act or dance_ok(hand)): return 'midori_self'
+                if 'IREKAE' in hand: return 'irekae'
+                if hyper >= (2 if gsrc == 'hyper' else 1) and hand.count('HYPER') >= (2 if gsrc == 'hyper' else 1) \
+                        and 'LATIAS' in avail and len(hand) >= (6 if gsrc == 'hyper' else 3): return 'hyper_latias'
+                return None
+            route = _route()
+            # 2026-11-22: 前出し手段が無ければ、手札のオーガポンをベンチに出してみどりのまいで掘る。
+            # この条件は先1の手張りが必須なので、手張り用のエネを1枚残せるとき(dance_ok)だけ掘る
+            while _sim.PROMOTE_DIG and route is None and 'MIDORI' in hand and dance_ok(hand) \
+                    and (gsrc != 'hyper' or len(hand) >= 5):
+                hand.remove('MIDORI'); bench.append('MIDORI'); do_dance(hand); draw(1)
+                dance_used = True
+                grass += 1
+                route = _route()
             if gsrc == 'hand': hand.remove('GARURA')
             elif gsrc == 'mega': hand.remove('MEGASIG')
             else:
                 prot = {'latias': {'LATIAS'}, 'irekae': {'IREKAE'}}.get(route, set())
-                hand.remove('HYPER'); pay_hyper(hand, CORE | prot, keep_en=1); hyper = 0
+                hand.remove('HYPER'); pay_hyper(hand, CORE | prot, keep_en=1); hyper -= 1
             gar_in_play = True
             need += 1; gar_counted = True
             if gsrc == 'hyper': nhyp += 1
@@ -91,8 +111,9 @@ def trial3(tmpl, rnd, stats, deal=None):
                     need += 1; lat_counted = True
                 else: ok = False
             elif route == 'midori_self':
-                if do_dance(hand):                  # 手札の草を貼って退避コストで捨てる(例外許可)
-                    dance_used = True; draw(1)
+                if dug_act or do_dance(hand):       # 手札の草を貼って退避コストで捨てる(例外許可)
+                    if not dug_act: draw(1)
+                    dance_used = True
                     bench.append('MIDORI')
                     need += 1; mid_counted = True
                 else: ok = False
@@ -101,11 +122,14 @@ def trial3(tmpl, rnd, stats, deal=None):
                 else: ok = False
             elif route == 'hyper_latias':
                 if 'HYPER' in hand and len(hand) >= 3:
-                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}, keep_en=1); hyper = 0; bench.append('LATIAS')
+                    hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}, keep_en=1); hyper -= 1; bench.append('LATIAS')
                     need += 1; nhyp += 1; lat_counted = True
                 else: ok = False
             elif route is None:
                 ok = False
+            if dug_act:
+                dance_used = True                    # 掘ったバトル場のオーガポンは、このターンもう撃てない
+                if route != 'midori_self': grass += 1   # 逃げに使わなかった草はオーガポンに残る
             if ok and route:
                 if start not in bench: bench.append(start)
                 active = 'GARURA'
@@ -122,7 +146,7 @@ def trial3(tmpl, rnd, stats, deal=None):
     midori_in_play = ('MIDORI' in bench) or (active == 'MIDORI')
     mid_by_hyper = False
     if not midori_in_play and hyper and 'HYPER' in hand and 'MIDORI' in avail and len(hand) >= 3:
-        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0
+        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper -= 1
         bench.append('MIDORI'); midori_in_play = True; mid_by_hyper = True
     if midori_in_play and not dance_used and dance_ok(hand):
         dance_used = True; do_dance(hand); grass += 1; draw(1)
@@ -134,7 +158,7 @@ def trial3(tmpl, rnd, stats, deal=None):
         if not lat_counted: need += 1; lat_counted = True
     if hyper and 'HYPER' in hand and 'LATIAS' not in bench and 'IREKAE' not in hand \
        and active != 'GARURA' and 'LATIAS' in avail and len(hand) >= 3:
-        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper = 0; bench.append('LATIAS')
+        hand.remove('HYPER'); pay_hyper(hand, CORE, keep_en=1); hyper -= 1; bench.append('LATIAS')
         if not lat_counted: need += 1; nhyp += 1; lat_counted = True
     # T1 手張り(ガルーラへ直付け。無ければ達成不能)
     e_gar = 0
@@ -150,7 +174,7 @@ def trial3(tmpl, rnd, stats, deal=None):
     st = {'active': active == 'GARURA', 'latias': 'LATIAS' in bench,
           'midori': midori_in_play, 'grass': grass, 'avail': set(deck),
           'need': need, 'nhyp': nhyp}
-    hyper_t2 = 1 if 'HYPER' in hand else 0
+    hyper_t2 = min(_sim.HYPER_T2_MAX, hand.count('HYPER'))
 
     def sup_ok(s):
         """サポート s を撃つコスト: (hyper使用数, ポケモン新規計上) or None"""
@@ -178,7 +202,7 @@ def trial3(tmpl, rnd, stats, deal=None):
     if st['midori'] and dance_ok(hand):   # T1でダンス済みでも次の番は再度使える
         do_dance(hand); st['grass'] += 1; draw(1)
     st['avail'] = set(deck)
-    hyper_t2 = 1 if 'HYPER' in hand else 0
+    hyper_t2 = min(_sim.HYPER_T2_MAX, hand.count('HYPER'))
 
     u = unmet(hand, st, hyper_t2, False)
     if not u: return True
@@ -207,6 +231,26 @@ def trial3(tmpl, rnd, stats, deal=None):
         u2 = unmet(hand, st2, h2, False)
         if not (req & u2): return True
     for p in u: stats['miss_' + p] += 1
+    return False
+
+def trial3(tmpl, rnd, stats, deal=None):
+    """条件3。2026-11-22: 先攻T1でハイパー2枚使う新しい線で未達のとき、旧来(T1は1枚まで)の線でも
+    評価して、どちらかで成立すれば達成とする(規約を緩めて値が下がらないための最善手評価)。"""
+    from collections import Counter
+    if deal is None:
+        d = tmpl[:]
+        rnd.shuffle(d)
+        while True:
+            if any(c in BASICS for c in d[:7]): break
+            rnd.shuffle(d)
+    else:
+        d = list(deal)
+    tmp = Counter()
+    if _trial3(tmpl, rnd, tmp, d): return True
+    # リーリエ採用デッキでは、引き直しのランダム性により2つの線のORが二重引き直しになり過大評価となるため、再評価は行わない(リーリエ0枚のデッキでは試行が配りだけで決まるので問題ない)。
+    if _sim.HYPER_T1_MAX > 1 and 'LILLIE' not in tmpl:
+        if _trial3(tmpl, random.Random(','.join(d) + '|cap1'), Counter(), d, t1_cap=1): return True
+    stats.update(tmp)
     return False
 
 def run3(counts, trials, seed=777):

@@ -49,12 +49,57 @@ except Exception:
     _CARDS = {}
 
 
+# ── ハイパーボールの先攻規約(2026-11-22 ユーザー確定で緩和) ─────────────
+# HYPER_T1_MAX / HYPER_T2_MAX : 先攻T1・T2それぞれで1ターンに使えるハイパーボールの枚数上限
+#   旧規約=1(T1で1回・T2で1回)。新規約=2。
+# HYPER_RULE : 'all_ng' = 旧「全員ハイパーNG」(必要ポケモンが2体以上のとき全員をハイパーで賄うのは不可)
+#              'cover2' = 新「ハイパーで補うポケモンは2体まで」(3体以上は不可。通算判定)
+# 旧規約に戻すと旧エンジンと完全一致する(回帰確認用)。
+HYPER_T1_MAX = 2
+HYPER_T2_MAX = 2
+HYPER_RULE = 'cover2'
+HYPER_COVER_MAX = 2
+
 def hyper_ok(need, nhyp):
-    """共通規約「全員ハイパーNG」の判定(v2・先攻はT1+T2通算)。
-    必要ポケモンが2体以上のとき、その全員をハイパーボールで賄う組み合わせは不可。
-    必要ポケモンが1体だけの条件には、規約の文言どおりこの制約は適用しない。"""
+    """共通規約「ハイパーで補うポケモンの数」の判定(先攻はT1+T2通算)。
+    'cover2': ハイパーで補うポケモンは2体まで。
+    'all_ng': 必要ポケモンが2体以上のとき、その全員をハイパーボールで賄う組み合わせは不可。
+              必要ポケモンが1体だけの条件には適用しない(旧規約)。"""
+    if HYPER_RULE == 'cover2':
+        return nhyp <= HYPER_COVER_MAX
     return not (need >= 2 and nhyp >= need)
 
+def hand_need(uh):
+    """ハイパーを uh 回使うのに必要な手札枚数(ハイパー本体1+トラッシュ2 を uh 回)。
+    uh<=1 は旧実装の式(2*uh+1)をそのまま踏襲し、2回以上は 3*uh とする。"""
+    return 2 * uh + 1 if uh <= 1 else 3 * uh
+
+
+
+# ── 2026-11-22: みどりのまいでガルーラの確保手段を掘る線 ─────────────────────
+# A: みどりのまいで引いた1枚を、ガルーラの確保(現物/メガシグナル/ハイパー)に使う
+# B: みどりのまいはオーガポン1体ごとに1ターン1回(ユーザー確認)。手札の2体目もベンチに出して掘る
+# ガルーラの確保手段が手札に無いときだけ掘る(無ければ条件1〜4はいずれも未達なので、掘って損はない)。
+# False で旧エンジンと完全一致(回帰確認用)。
+DIG_DANCE = True
+# 2026-11-22: ガルーラは確保できたが無償で前に出す手段が無いとき、手札のオーガポンをベンチに出して
+# みどりのまいで前出し手段(ラティアスex/いれかえ/ハイパー/つけかえ)を掘る線。False で旧エンジンと完全一致
+PROMOTE_DIG = True
+
+def dig_for_garura(hand, draw, active, bench, avail, hyper_avail):
+    """戻り値: (バトル場のオーガポンが掘ったか, ベンチに出して掘ったオーガポンの数)"""
+    act = False; nb = 0
+    if not DIG_DANCE: return act, nb
+    def src():
+        return ('GARURA' in hand or ('MEGASIG' in hand and 'GARURA' in avail)
+                or (hyper_avail and 'HYPER' in hand and 'GARURA' in avail and len(hand) >= 3))
+    while not src():
+        if active == 'MIDORI' and not act and 'GRASS' in hand:
+            hand.remove('GRASS'); draw(1); act = True; continue
+        if 'MIDORI' in hand and 'GRASS' in hand:
+            hand.remove('MIDORI'); bench.append('MIDORI'); hand.remove('GRASS'); draw(1); nb += 1; continue
+        break
+    return act, nb
 
 def pick_start(basics):
     if 'GARURA' in basics: return 'GARURA'
@@ -147,7 +192,7 @@ def feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
         for hr, pr, sr, paid_retreat in front_opts:
             uh = hf + hr + sup_hyper_cost
             if uh > hyper_left: continue
-            if len(hand) < 2 * uh + 1: continue          # ハイパーのトラッシュコスト
+            if len(hand) < hand_need(uh): continue          # ハイパーのトラッシュコスト
             if sf and sf != supporter: continue
             if sr and sr != supporter: continue
             if not hyper_ok(need + pf + pr + sup_poke, nhyp + uh): continue
@@ -160,7 +205,7 @@ def feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
                 return True
     return False
 
-def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
+def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None, no_promote_dig=False):
     if deal is not None:
         d = list(deal)
     else:
@@ -184,7 +229,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
     active = start
     bench = []
     e_firo = 0; e_other = 0
-    hyper_t1 = 1          # 先攻はハイパー1ターン1回まで(判断1)
+    hyper_t1 = HYPER_T1_MAX if t1_cap is None else t1_cap   # 先攻T1のハイパー使用可能枚数(2026-11-22: 1→2。t1_cap で上書き)
     paid = False
     midori_used = False
     esc = ESC.get(start, 1)
@@ -198,21 +243,43 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
     # ---------- T1: ガルーラを場に出す(できればバトル場へ) ----------
     garura_in_play = (active == 'GARURA')
     used_paid = False
+    dug_act = False; dug_nb = 0
     if active != 'GARURA':
+        dug_act, dug_nb = dig_for_garura(hand, draw, active, bench, avail, hyper_t1)
+        if dug_act or dug_nb:
+            need += 1; mid_counted = True
+        if dug_nb:
+            midori_used = True; e_other += dug_nb      # ベンチのオーガポンに草が乗る(つけかえで動かせる)
         gsrc = None
         if 'GARURA' in hand: gsrc = 'hand'
         elif 'MEGASIG' in hand and 'GARURA' in avail: gsrc = 'mega'
         elif hyper_t1 and 'HYPER' in hand and 'GARURA' in avail and len(hand) >= 3: gsrc = 'hyper'
         if gsrc:
             # 退避手段(無償優先)
-            route = None
-            if esc == 0: route = 'free'
-            elif 'LATIAS' in hand: route = 'latias_hand'
-            elif start == 'MIDORI' and dance_ok(hand, keep_attach=False): route = 'midori_self'
-            elif gsrc != 'hyper' and hyper_t1 and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: route = 'hyper_latias'
-            elif 'MIDORI' in hand and 'TSUKEKAE' in hand and dance_ok(hand, keep_attach=False) and esc == 1: route = 'midori_tsuke'
-            elif 'IREKAE' in hand: route = 'irekae'
-            elif esc == 1 and any(c in ENER for c in hand) and not no_paid: route = 'paid'
+            def _route():
+                if esc == 0: return 'free'
+                if 'LATIAS' in hand: return 'latias_hand'
+                if start == 'MIDORI' and (dug_act or dance_ok(hand, keep_attach=False)): return 'midori_self'
+                if gsrc != 'hyper' and hyper_t1 and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: return 'hyper_latias'
+                if 'MIDORI' in hand and 'TSUKEKAE' in hand and dance_ok(hand, keep_attach=False) and esc == 1: return 'midori_tsuke'
+                if dug_nb and 'TSUKEKAE' in hand and esc == 1: return 'midori_tsuke_dug'   # 掘ったオーガポンの草をつけかえて逃げる
+                if 'IREKAE' in hand: return 'irekae'
+                # 2026-11-22: ガルーラをハイパーで取った番に、2枚目のハイパーでラティアスexも確保する線。
+                # 無償の退避(いれかえ等)が無いときだけ使い、エネを払う退避('paid')より優先する
+                if gsrc == 'hyper' and hyper_t1 >= 2 and hand.count('HYPER') >= 2 \
+                        and 'LATIAS' in avail and len(hand) >= 6: return 'hyper_latias'
+                if esc == 1 and any(c in ENER for c in hand) and not no_paid: return 'paid'
+                return None
+            route = _route()
+            # 2026-11-22: 無償の前出し手段が無ければ、手札のオーガポンをベンチに出してみどりのまいで掘る
+            # (オーガポン1体ごとに1回)。ハイパーでガルーラを取る場合は、そのコスト分の手札を残す
+            if PROMOTE_DIG and not no_promote_dig:
+                while route in (None, 'paid') and 'MIDORI' in hand and 'GRASS' in hand \
+                        and (gsrc != 'hyper' or len(hand) >= 5):
+                    hand.remove('MIDORI'); bench.append('MIDORI'); hand.remove('GRASS'); draw(1)
+                    dug_nb += 1; e_other += 1; midori_used = True
+                    if not mid_counted: need += 1; mid_counted = True
+                    route = _route()
             used_paid = (route == 'paid')
             if True:
                 # ガルーラ確保(先に手札から抜く)
@@ -221,7 +288,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
                 elif gsrc == 'hyper':
                     prot = {'latias_hand':{'LATIAS'}, 'midori_tsuke':{'MIDORI','TSUKEKAE','GRASS'}, 'midori_self':{'GRASS'},
                             'irekae':{'IREKAE'}, 'paid':{'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}}.get(route, set())
-                    hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper_t1 = 0
+                    hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper_t1 -= 1
                 if gsrc:
                     garura_in_play = True
                     if not gar_counted:
@@ -238,6 +305,8 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
                         hand.remove('LATIAS'); bench.append('LATIAS')
                         need += 1; lat_counted = True
                     else: oknow = False
+                elif route == 'midori_self' and dug_act:
+                    midori_used = True                    # 掘ったときに貼った草で逃げる(追加のまいは不要)
                 elif route == 'midori_self':
                     if 'GRASS' in hand:
                         midori_used = True; do_dance(hand); draw(1)   # みどりのまい(手札の草を貼って逃げコストに捨てる)
@@ -245,7 +314,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
                     need += 1; mid_counted = True
                 elif route == 'hyper_latias':
                     if 'HYPER' in hand and len(hand) >= 3:
-                        hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}); hyper_t1 = 0
+                        hand.remove('HYPER'); pay_hyper(hand, {'GARURA'}); hyper_t1 -= 1
                         bench.append('LATIAS')
                         need += 1; nhyp += 1; lat_counted = True
                     else: oknow = False
@@ -258,12 +327,17 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
                 elif route == 'irekae':
                     if 'IREKAE' in hand: hand.remove('IREKAE')
                     else: oknow = False
+                elif route == 'midori_tsuke_dug':
+                    if 'TSUKEKAE' in hand: hand.remove('TSUKEKAE'); e_other -= 1
+                    else: oknow = False
                 elif route == 'paid':
                     if any(c in ENER for c in hand):
                         for c in list(hand):
                             if c in ENER: hand.remove(c); break
                         paid = True
                     else: oknow = False
+                if dug_act and route != 'midori_self':
+                    e_other += 1; midori_used = True      # バトル場のオーガポンに草が残る
                 if oknow:
                     bench.append(active)
                     active = 'GARURA'
@@ -293,7 +367,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
     if 'FIRO' in hand:
         hand.remove('FIRO'); firo_in_play = True; need += 1
     elif hyper_t1 and 'HYPER' in hand and 'FIRO' in avail and len(hand) >= 3:
-        hand.remove('HYPER'); pay_hyper(hand, CORE); hyper_t1 = 0
+        hand.remove('HYPER'); pay_hyper(hand, CORE); hyper_t1 -= 1
         firo_in_play = True; need += 1; nhyp += 1
     if 'LATIAS' in hand:
         hand.remove('LATIAS'); bench.append('LATIAS')
@@ -318,7 +392,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
     esc_active = 3 if active == 'GARURA' else ({'LATIAS':0,'KAPU':0}.get(active, 1))
     if latias_in_play: esc_active = 0
     avail = set(deck)
-    hyper_left = 1 if 'HYPER' in hand else 0   # 先攻はハイパー1ターン1回まで(判断1)
+    hyper_left = min(HYPER_T2_MAX, hand.count('HYPER'))   # 先攻T2のハイパー使用可能枚数(2026-11-22: 1→2)
 
     # サポート候補(現物 / ニャース経由): (サポート, hyperコスト, ポケモン新規計上)
     cands = [(None, 0, 0)]
@@ -344,7 +418,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False):
             deck.extend(hand); hand.clear(); rnd.shuffle(deck)
             draw(8)
             avail = set(deck)
-            hl2 = (1 if 'HYPER' in hand else 0) if (hyper_left - hc) > 0 else 0
+            hl2 = max(0, min(hyper_left - hc, hand.count('HYPER')))
             ok = feas(hand, firo_in_play, e_firo, e_other, latias_in_play, avail,
                       hl2, None, esc_active, need=need + pk, nhyp=nhyp + hc)
     return cond1, True, ok, used_paid, d
@@ -366,6 +440,28 @@ def trial(deck_template, rnd, deal=None, stats=None):
         if z2 and ok2:
             z, ok = True, True
             if stats is not None: stats['c2_救済_手張りをファイアローに温存'] += 1
+    # 2026-11-22: 先攻T1でハイパー2枚使う線を選んだ結果、旧来(T1は1枚まで)の線より条件2が悪化する配りが
+    # あるため、条件2は「最善手」の前提で旧来のT1の線でも評価し、どちらかで成立すれば達成とする。
+    # (規約を緩めた結果として値が下がらないことを保証する)条件1は新しい線で評価(単調に増える)。
+    # リーリエ採用デッキでは、引き直しのランダム性により2つの線のORが二重引き直しになり過大評価となるため、再評価は行わない(リーリエ0枚のデッキでは試行が配りだけで決まるので問題ない)。
+    # 2026-11-22: 前出し手段を掘るためにみどりのまいで草を使った結果、条件2が悪化する配りがあるため、
+    # 掘らない線でも評価してどちらかで成立すれば達成とする(最善手評価。リーリエ採用デッキでは行わない)
+    if PROMOTE_DIG and 'LILLIE' not in deck_template and not (z and ok):
+        alt_rnd = random.Random(','.join(d) + '|nopd')
+        _, z4, ok4, up4, _ = _trial(deck_template, alt_rnd, d, None, no_promote_dig=True)
+        if up4 and not ok4:
+            _, z4, ok4, _, _ = _trial(deck_template, random.Random(','.join(d) + '|nopdnp'), d, None, no_paid=True, no_promote_dig=True)
+        if z4 and ok4:
+            z, ok = True, True
+            if stats is not None: stats['c2_救済_前出しを掘らない線'] += 1
+    if HYPER_T1_MAX > 1 and 'LILLIE' not in deck_template and not (z and ok):
+        alt_rnd = random.Random(','.join(d) + '|cap1')
+        _, z3, ok3, up3, _ = _trial(deck_template, alt_rnd, d, None, t1_cap=1)
+        if up3 and not ok3:
+            _, z3, ok3, _, _ = _trial(deck_template, random.Random(','.join(d) + '|cap1np'), d, None, no_paid=True, t1_cap=1)
+        if z3 and ok3:
+            z, ok = True, True
+            if stats is not None: stats['c2_救済_旧T1ルート'] += 1
     return c1, z, ok
 
 def run(counts, trials, seed):
