@@ -1,14 +1,26 @@
 import random, sys
 
 BASICS = {'GARURA','PIPPI','NYASU','LATIAS','KICHI','IDO','KAPU','NAGE','PAO','MIDORI'}
-ENER   = {'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}
+ENER   = {'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM','TELEPATH'}
 BASIC_EN = ('GRASS','PSY','WATER','FIGHT','LIGHT')   # プリズムはアカマツ対象外
 SUPS   = {'AKAMATSU','BOSS','LILLIE','CYRANO','JUDGE','ANGO'}
 JUNK   = ['FILLER','CAVERN','BOSS','JUDGE','ANGO','STAMP','TANKA','PIPPI','NAGE','PAO','KICHI','IDO','PSY','WATER','FIGHT','LIGHT']
 
 OTHER_ORDER = ['PIPPI','PAO','NAGE','KICHI','IDO','NYASU']
 CORE = {'GARURA','FIRO','LATIAS','MIDORI','IREKAE','TSUKEKAE','AKAMATSU','CYRANO','LILLIE',
-        'NYASU','MEGASIG','HYPER','GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}
+        'NYASU','MEGASIG','HYPER','GRASS','PSY','WATER','FIGHT','LIGHT','PRISM','TELEPATH'}
+
+# ── 2026-11-23: テレパス超エネルギー(megagarura-b で採用) ─────────────────────
+# 手札から超ポケモン(ピッピ/ラティアスex)に手張りしたとき、山札から超ポケモンを2体までベンチに出す。
+# T1の前出し線: ピッピ(バトル場 or 手札からベンチ)にテレパスを手張り → 山札のラティアスexをベンチ
+# → スカイラインで逃げ0 → ガルーラを無償で前に出す。手張りはテレパスで使い切る(退避コストではない)。
+# 手札にテレパスが無いデッキでは一切発動しない(megagarura の値は不変)。False で無効。
+TELEPATH_ROUTE = True
+PSY_POKE = ('PIPPI', 'LATIAS')
+# 2026-11-23: スタートのときだけテレパスの手張り先にするポケモン(デッキ側で設定。例: {'KASHIRA'})。
+# ユーザー指定: カシラにテレパスを貼るのは「カシラスタート+ガルーラをハイパーを使わずに確保した(=ターン最初のドローで引いた)」場合のみ
+TELEPATH_START_ONLY = set()
+T1_SNAP = None   # 条件Bの判定用: T1の前出し後(ダッシュ後)の状態を書き出す先(dict を入れると記録)
 
 # 逃げコスト表(先攻・後攻で共用。未登録のたねは1として扱う)
 ESC = {'GARURA': 3, 'LATIAS': 0, 'KAPU': 0, 'FIRO': 0}
@@ -243,6 +255,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
     # ---------- T1: ガルーラを場に出す(できればバトル場へ) ----------
     garura_in_play = (active == 'GARURA')
     used_paid = False
+    tele_used = False
     dug_act = False; dug_nb = 0
     if active != 'GARURA':
         dug_act, dug_nb = dig_for_garura(hand, draw, active, bench, avail, hyper_t1)
@@ -263,6 +276,9 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
                 if gsrc != 'hyper' and hyper_t1 and 'HYPER' in hand and 'LATIAS' in avail and len(hand) >= 3: return 'hyper_latias'
                 if 'MIDORI' in hand and 'TSUKEKAE' in hand and dance_ok(hand, keep_attach=False) and esc == 1: return 'midori_tsuke'
                 if dug_nb and 'TSUKEKAE' in hand and esc == 1: return 'midori_tsuke_dug'   # 掘ったオーガポンの草をつけかえて逃げる
+                if TELEPATH_ROUTE and 'TELEPATH' in hand and 'LATIAS' in avail \
+                        and (start == 'PIPPI' or 'PIPPI' in hand
+                             or (start in TELEPATH_START_ONLY and gsrc == 'hand')): return 'telepath'
                 if 'IREKAE' in hand: return 'irekae'
                 # 2026-11-22: ガルーラをハイパーで取った番に、2枚目のハイパーでラティアスexも確保する線。
                 # 無償の退避(いれかえ等)が無いときだけ使い、エネを払う退避('paid')より優先する
@@ -287,7 +303,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
                 elif gsrc == 'mega': hand.remove('MEGASIG')
                 elif gsrc == 'hyper':
                     prot = {'latias_hand':{'LATIAS'}, 'midori_tsuke':{'MIDORI','TSUKEKAE','GRASS'}, 'midori_self':{'GRASS'},
-                            'irekae':{'IREKAE'}, 'paid':{'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}}.get(route, set())
+                            'irekae':{'IREKAE'}, 'telepath':{'TELEPATH','PIPPI'}, 'paid':{'GRASS','PSY','WATER','FIGHT','LIGHT','PRISM'}}.get(route, set())
                     hand.remove('HYPER'); pay_hyper(hand, CORE | prot); hyper_t1 -= 1
                 if gsrc:
                     garura_in_play = True
@@ -327,6 +343,14 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
                 elif route == 'irekae':
                     if 'IREKAE' in hand: hand.remove('IREKAE')
                     else: oknow = False
+                elif route == 'telepath':
+                    if 'TELEPATH' in hand and (start == 'PIPPI' or 'PIPPI' in hand or start in TELEPATH_START_ONLY):
+                        if start != 'PIPPI' and start not in TELEPATH_START_ONLY:
+                            hand.remove('PIPPI'); bench.append('PIPPI')
+                        hand.remove('TELEPATH'); tele_used = True
+                        bench.append('LATIAS')      # 山札から(サイド落ちでない前提は avail で判定済み)
+                        need += 1; lat_counted = True
+                    else: oknow = False
                 elif route == 'midori_tsuke_dug':
                     if 'TSUKEKAE' in hand: hand.remove('TSUKEKAE'); e_other -= 1
                     else: oknow = False
@@ -358,6 +382,9 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
 
     # ---------- T1 残りの展開 ----------
     if active == 'GARURA': draw(2)   # おつかいダッシュ(バトル場のときのみ)
+    if T1_SNAP is not None:
+        T1_SNAP.update(hand=list(hand), bench=list(bench), active=active, tele_used=tele_used,
+                       paid=paid, hyper_t1=hyper_t1, nhyp=nhyp, avail=set(deck))
     if 'MIDORI' not in bench and 'MIDORI' in hand:
         hand.remove('MIDORI'); bench.append('MIDORI')
     if 'MIDORI' in bench and not midori_used and dance_ok(hand):
@@ -372,7 +399,7 @@ def _trial(deck_template, rnd, deal=None, stats=None, no_paid=False, t1_cap=None
     if 'LATIAS' in hand:
         hand.remove('LATIAS'); bench.append('LATIAS')
         if not lat_counted: need += 1; lat_counted = True
-    if not paid:
+    if not paid and not tele_used:
         for c in list(hand):
             if c in ENER:
                 hand.remove(c)
